@@ -1,10 +1,12 @@
 class ChatMessage {
   final String id;
   final String sessionId;
-  final String role; // 'user' | 'assistant'
+  final String role; // 'user' | 'assistant' | 'system'
   String content;
-  String memoryStatus; // 'ok' | 'degraded'
   final DateTime createdAt;
+  String? memoryStatus;
+  String? reasoning;
+  String? statusText;
   bool isStreaming;
   double? durationSeconds;
   String? recallBudget;
@@ -16,8 +18,10 @@ class ChatMessage {
     required this.sessionId,
     required this.role,
     required this.content,
-    this.memoryStatus = 'ok',
     required this.createdAt,
+    this.memoryStatus = 'ok',
+    this.reasoning,
+    this.statusText,
     this.isStreaming = false,
     this.durationSeconds,
     this.recallBudget,
@@ -30,14 +34,16 @@ class ChatMessage {
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
-      id: json['id'] as String,
-      sessionId: json['session_id'] as String,
-      role: json['role'] as String,
-      content: json['content'] as String,
-      memoryStatus: json['memory_status'] as String? ?? 'ok',
+      id: json['id'] as String? ?? '',
+      sessionId: json['session_id'] as String? ?? '',
+      role: json['role'] as String? ?? 'user',
+      content: json['content'] as String? ?? '',
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'] as String) ?? DateTime.now()
           : DateTime.now(),
+      memoryStatus: json['memory_status'] as String? ?? 'ok',
+      reasoning: json['reasoning'] as String?,
+      statusText: json['status_text'] as String?,
       isStreaming: false,
     );
   }
@@ -48,8 +54,10 @@ class ChatMessage {
       'session_id': sessionId,
       'role': role,
       'content': content,
-      'memory_status': memoryStatus,
       'created_at': createdAt.toIso8601String(),
+      if (memoryStatus != null) 'memory_status': memoryStatus,
+      if (reasoning != null) 'reasoning': reasoning,
+      if (statusText != null) 'status_text': statusText,
     };
   }
 }

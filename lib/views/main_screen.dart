@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
-import 'sidebar_view.dart';
+import 'sidebar_drawer.dart';
 import 'chat_view.dart';
 import 'search_dialog.dart';
 
@@ -14,6 +14,8 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
   @override
   void initState() {
     super.initState();
@@ -35,7 +37,7 @@ class _MainScreenState extends State<MainScreen> {
     if (!mounted) return false;
     final provider = context.read<ChatProvider>();
 
-    // 1. Cmd + Shift + O (also Cmd + Shift + N / T) -> New Chat
+    // Cmd + Shift + O -> New Chat
     if (isMetaOrCtrl && isShift &&
         (event.logicalKey == LogicalKeyboardKey.keyO ||
          event.logicalKey == LogicalKeyboardKey.keyN ||
@@ -44,13 +46,17 @@ class _MainScreenState extends State<MainScreen> {
       return true;
     }
 
-    // 2. Cmd + B -> Toggle Sidebar
+    // Cmd + B -> Toggle Drawer
     if (isMetaOrCtrl && !isShift && event.logicalKey == LogicalKeyboardKey.keyB) {
-      provider.toggleSidebar();
+      if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+        _scaffoldKey.currentState?.closeDrawer();
+      } else {
+        _scaffoldKey.currentState?.openDrawer();
+      }
       return true;
     }
 
-    // 3. Cmd + K -> Global Search Modal
+    // Cmd + K -> Global Search Modal
     if (isMetaOrCtrl && !isShift && event.logicalKey == LogicalKeyboardKey.keyK) {
       showDialog(
         context: context,
@@ -64,27 +70,11 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<ChatProvider>();
-
     return Scaffold(
-      body: Row(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            width: provider.isSidebarOpen ? 260 : 0,
-            child: const ClipRect(
-              child: OverflowBox(
-                minWidth: 260,
-                maxWidth: 260,
-                alignment: Alignment.topLeft,
-                child: SidebarView(),
-              ),
-            ),
-          ),
-          const Expanded(child: ChatView()),
-        ],
-      ),
+      key: _scaffoldKey,
+      resizeToAvoidBottomInset: true,
+      drawer: const SidebarDrawer(),
+      body: const ChatView(),
     );
   }
 }

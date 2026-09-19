@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/session.dart';
 import '../models/chat_message.dart';
 import '../models/search_result.dart';
+import '../models/health_details.dart';
+import '../models/mental_model_item.dart';
 import '../services/api_service.dart';
 
 class ChatProvider extends ChangeNotifier {
@@ -15,6 +18,8 @@ class ChatProvider extends ChangeNotifier {
 
   bool _isBackendOnline = false;
   bool _isHindsightHealthy = true;
+  HealthDetails? _healthDetails;
+
   bool _isLoadingSessions = false;
   bool _isLoadingMessages = false;
   bool _isGenerating = false;
@@ -31,6 +36,9 @@ class ChatProvider extends ChangeNotifier {
   List<SearchResult> _searchResults = [];
   bool _isSearching = false;
 
+  List<MentalModelItem> _mentalModels = [];
+  bool _isLoadingMentalModels = false;
+
   StreamSubscription<String>? _streamSub;
 
   // Getters
@@ -40,6 +48,7 @@ class ChatProvider extends ChangeNotifier {
   List<String> get openTabIds => _openTabIds;
   bool get isBackendOnline => _isBackendOnline;
   bool get isHindsightHealthy => _isHindsightHealthy;
+  HealthDetails? get healthDetails => _healthDetails;
   bool get isLoadingSessions => _isLoadingSessions;
   bool get isLoadingMessages => _isLoadingMessages;
   bool get isGenerating => _isGenerating;
@@ -51,6 +60,8 @@ class ChatProvider extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   List<SearchResult> get searchResults => _searchResults;
   bool get isSearching => _isSearching;
+  List<MentalModelItem> get mentalModels => _mentalModels;
+  bool get isLoadingMentalModels => _isLoadingMentalModels;
 
   String _recallBudget = 'medium';
   String _thinkingEffort = 'medium';
@@ -61,6 +72,29 @@ class ChatProvider extends ChangeNotifier {
   String get thinkingEffort => _currentSession?.thinkingEffort ?? _thinkingEffort;
   String get verbosity => _currentSession?.verbosity ?? _verbosity;
   bool get isTemporary => _isTemporaryMode || (_currentSession?.isTemporary ?? false);
+
+  /// Sessions grouped by date for the mobile drawer
+  Map<String, List<Session>> get groupedSessions {
+    final Map<String, List<Session>> groups = {
+      'Today': [],
+      'Yesterday': [],
+      'Previous 7 Days': [],
+      'Older': [],
+    };
+
+    for (final session in _sessions) {
+      final group = session.dateGroup;
+      if (groups.containsKey(group)) {
+        groups[group]!.add(session);
+      } else {
+        groups['Older']!.add(session);
+      }
+    }
+
+    // Remove empty groups
+    groups.removeWhere((key, value) => value.isEmpty);
+    return groups;
+  }
 
   ChatProvider() {
     init();
@@ -74,10 +108,24 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> checkBackendHealth() async {
-    final healthMap = await _api.getSystemHealth();
-    _isBackendOnline = healthMap['backend'] == 'healthy';
-    _isHindsightHealthy = healthMap['hindsight'] == 'healthy';
+    final details = await _api.getHealthDetails();
+    _healthDetails = details;
+    _isBackendOnline = details.backend == 'healthy';
+    _isHindsightHealthy = details.hindsight == 'healthy';
     notifyListeners();
+  }
+
+  Future<void> loadMentalModels() async {
+    _isLoadingMentalModels = true;
+    notifyListeners();
+    try {
+      _mentalModels = await _api.getMentalModels();
+    } catch (e) {
+      debugPrint('Error loading mental models: $e');
+    } finally {
+      _isLoadingMentalModels = false;
+      notifyListeners();
+    }
   }
 
   Future<void> loadSessions() async {
@@ -86,9 +134,7 @@ class ChatProvider extends ChangeNotifier {
     try {
       final list = await _api.listSessions();
       _sessions = list;
-      if (_currentSession == null && !_isTemporaryMode && _sessions.isNotEmpty) {
-        await selectSession(_sessions.first);
-      }
+      // Do not auto-select most recent conversation on fresh open: default to new chat
     } catch (e) {
       debugPrint('Error loading sessions: $e');
     } finally {
@@ -129,34 +175,10 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  void selectTab(String sessionId) {
-    final s = _sessions.where((sess) => sess.id == sessionId).toList();
-    if (s.isNotEmpty) {
-      selectSession(s.first);
-    }
-  }
-
-  void closeTab(String sessionId) {
-    _openTabIds.remove(sessionId);
-    if (_currentSession?.id == sessionId) {
-      if (_openTabIds.isNotEmpty) {
-        selectTab(_openTabIds.last);
-      } else {
-        startNewChat();
-      }
-    } else {
-      notifyListeners();
-    }
-  }
-
   void toggleTemporary() {
     if (isTemporary) {
       _isTemporaryMode = false;
-      if (_sessions.isNotEmpty) {
-        selectSession(_sessions.first);
-      } else {
-        startNewChat(isTemporary: false);
-      }
+      startNewChat(isTemporary: false);
     } else {
       startNewChat(isTemporary: true);
     }
@@ -182,8 +204,32 @@ class ChatProvider extends ChangeNotifier {
       }
       _messages = _messages.sublist(0, index);
       notifyListeners();
-      await sendMessage(newText);
+      await sendMessage(newText, messageId: targetMessage.id);
     }
+  }
+
+  Future<void> retryTurn(int userMessageIndex) async {
+    if (_isGenerating || userMessageIndex < 0 || userMessageIndex >= _messages.length) return;
+    final targetMessage = _messages[userMessageIndex];
+    final currentSessionId = _currentSession?.id;
+    if (currentSessionId != null) {
+      await _api.truncateMessagesFrom(currentSessionId, targetMessage.id);
+    }
+    final content = targetMessage.content;
+    _messages = _messages.sublist(0, userMessageIndex);
+    notifyListeners();
+    await sendMessage(content, messageId: targetMessage.id);
+  }
+
+  Future<void> deleteTurn(int messageIndex) async {
+    if (_isGenerating || messageIndex < 0 || messageIndex >= _messages.length) return;
+    final targetMessage = _messages[messageIndex];
+    final currentSessionId = _currentSession?.id;
+    if (currentSessionId != null) {
+      await _api.truncateMessagesFrom(currentSessionId, targetMessage.id);
+    }
+    _messages = _messages.sublist(0, messageIndex);
+    notifyListeners();
   }
 
   Future<void> regenerateLastAssistant() async {
@@ -214,10 +260,6 @@ class ChatProvider extends ChangeNotifier {
     _thinkingEffort = 'medium';
     _verbosity = 'low';
     notifyListeners();
-  }
-
-  Future<void> createNewSession({bool isTemporary = false}) async {
-    startNewChat(isTemporary: isTemporary);
   }
 
   Future<void> renameSession(String sessionId, String newName) async {
@@ -334,7 +376,7 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> sendMessage(String text) async {
+  Future<void> sendMessage(String text, {String? messageId}) async {
     final cleanText = text.trim();
     if (cleanText.isEmpty || _isGenerating) return;
 
@@ -374,7 +416,7 @@ class ChatProvider extends ChangeNotifier {
     }
 
     final userMsg = ChatMessage(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: messageId ?? DateTime.now().microsecondsSinceEpoch.toString(),
       sessionId: session.id,
       role: 'user',
       content: cleanText,
@@ -386,6 +428,7 @@ class ChatProvider extends ChangeNotifier {
     final currentThinkingEffort = thinkingEffort;
     final currentVerbosity = verbosity;
 
+    // Immediately insert assistant placeholder with initial statusText
     final assistantMsg = ChatMessage(
       id: (DateTime.now().microsecondsSinceEpoch + 1).toString(),
       sessionId: session.id,
@@ -393,6 +436,7 @@ class ChatProvider extends ChangeNotifier {
       content: '',
       createdAt: DateTime.now(),
       isStreaming: true,
+      statusText: 'Thinking',
       recallBudget: currentRecallBudget,
       thinkingEffort: currentThinkingEffort,
     );
@@ -418,12 +462,17 @@ class ChatProvider extends ChangeNotifier {
     _streamSub = await _api.streamChat(
       sessionId: session.id,
       message: cleanText,
+      messageId: messageId,
       recallBudget: currentRecallBudget,
       thinkingEffort: currentThinkingEffort,
       verbosity: currentVerbosity,
       isTemporary: session.isTemporary,
-      onThinking: () {
-        _isThinking = true;
+      onStatusText: (status) {
+        assistantMsg.statusText = status;
+        notifyListeners();
+      },
+      onReasoningDelta: (rDelta) {
+        assistantMsg.reasoning = (assistantMsg.reasoning ?? '') + rDelta;
         notifyListeners();
       },
       onToolStart: (query) {
@@ -449,6 +498,11 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
       },
       onDelta: (deltaText) {
+        // Crucial: As soon as the first token arrives, remove the shimmer line completely!
+        if (assistantMsg.statusText != null) {
+          HapticFeedback.selectionClick();
+        }
+        assistantMsg.statusText = null;
         assistantMsg.content += deltaText;
         notifyListeners();
       },
@@ -458,12 +512,14 @@ class ChatProvider extends ChangeNotifier {
         _isThinking = false;
         _activeToolQuery = null;
         _isGenerating = false;
+        assistantMsg.statusText = null;
         assistantMsg.content = fullText;
         assistantMsg.memoryStatus = memoryStatus;
         assistantMsg.isStreaming = false;
         assistantMsg.durationSeconds = _elapsedSeconds > 0 ? _elapsedSeconds : 1.5;
         assistantMsg.toolCalls = List.from(_activeTools);
         session.updatedAt = DateTime.now();
+        HapticFeedback.lightImpact();
         notifyListeners();
       },
       onError: (err) {
@@ -472,6 +528,7 @@ class ChatProvider extends ChangeNotifier {
         _isThinking = false;
         _activeToolQuery = null;
         _isGenerating = false;
+        assistantMsg.statusText = null;
         assistantMsg.content = '[Error: $err]';
         assistantMsg.memoryStatus = 'degraded';
         assistantMsg.isStreaming = false;
@@ -491,6 +548,7 @@ class ChatProvider extends ChangeNotifier {
     _activeToolQuery = null;
     if (_messages.isNotEmpty && _messages.last.isStreaming) {
       _messages.last.isStreaming = false;
+      _messages.last.statusText = null;
     }
     notifyListeners();
   }

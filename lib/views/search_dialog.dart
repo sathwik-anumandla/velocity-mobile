@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/search_result.dart';
+import '../theme/velocity_colors.dart';
 
 class SearchDialog extends StatefulWidget {
   const SearchDialog({super.key});
@@ -24,13 +25,12 @@ class _SearchDialogState extends State<SearchDialog> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ChatProvider>();
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final dialogBg = isDark ? const Color(0xFF0A0A0A) : const Color(0xFFFFFFFF);
-    final inputBg = isDark ? const Color(0xFF141414) : const Color(0xFFF4F4F5);
-    final textMuted = isDark ? const Color(0xFFA1A1AA) : const Color(0xFF71717A);
-    final textPrimary = isDark ? Colors.white : Colors.black;
+    final dialogBg = isDark ? VelocityColors.darkBgModal : VelocityColors.lightBgModal;
+    final inputBg = isDark ? VelocityColors.darkBgInput : VelocityColors.lightBgInput;
+    final textMuted = isDark ? VelocityColors.darkTextMuted : VelocityColors.lightTextMuted;
+    final textPrimary = isDark ? VelocityColors.darkTextPrimary : VelocityColors.lightTextPrimary;
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -42,10 +42,11 @@ class _SearchDialogState extends State<SearchDialog> {
         backgroundColor: dialogBg,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         child: Container(
-          width: 620,
-          height: 520,
-          padding: const EdgeInsets.all(20),
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 600, maxHeight: 520),
+          padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -57,18 +58,20 @@ class _SearchDialogState extends State<SearchDialog> {
                     'Search Messages',
                     style: TextStyle(
                       fontSize: 16,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w600,
                       color: textPrimary,
                     ),
                   ),
                   const Spacer(),
                   IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                     icon: Icon(LucideIcons.x, size: 18, color: textMuted),
                     onPressed: () => Navigator.of(context).pop(),
                   )
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Container(
                 decoration: BoxDecoration(
                   color: inputBg,
@@ -79,7 +82,7 @@ class _SearchDialogState extends State<SearchDialog> {
                   autofocus: true,
                   style: TextStyle(fontSize: 14, color: textPrimary, fontWeight: FontWeight.w500),
                   decoration: InputDecoration(
-                    hintText: 'Search conversations (FTS5)...',
+                    hintText: 'Search conversations...',
                     hintStyle: TextStyle(color: textMuted, fontSize: 14, fontWeight: FontWeight.w500),
                     prefixIcon: Icon(LucideIcons.search, size: 16, color: textMuted),
                     border: InputBorder.none,
@@ -90,7 +93,7 @@ class _SearchDialogState extends State<SearchDialog> {
                   },
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Expanded(
                 child: provider.isSearching
                     ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
@@ -128,7 +131,7 @@ class _SearchDialogState extends State<SearchDialog> {
     Color textMuted,
   ) {
     final cleanSnippet = result.snippet.replaceAll('<mark>', '**').replaceAll('</mark>', '**');
-    final tileBg = isDark ? const Color(0xFF141414) : const Color(0xFFF4F4F5);
+    final tileBg = isDark ? VelocityColors.darkBgCard : VelocityColors.lightBgCard;
 
     return InkWell(
       borderRadius: BorderRadius.circular(10),

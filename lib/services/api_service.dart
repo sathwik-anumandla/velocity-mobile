@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import '../models/session.dart';
 import '../models/chat_message.dart';
 import '../models/search_result.dart';
+import '../models/health_details.dart';
+import '../models/mental_model_item.dart';
 
 String _getDefaultBaseUrl() {
   const envUrl = String.fromEnvironment('API_URL');
@@ -40,18 +42,57 @@ class ApiService {
     }
   }
 
-  /// Full System Health Check
-  Future<Map<String, dynamic>> getSystemHealth() async {
+  /// Full System Health Check returning HealthDetails
+  Future<HealthDetails> getHealthDetails() async {
     try {
       final response = await _client
           .get(Uri.parse('$baseUrl/health'))
-          .timeout(const Duration(seconds: 3));
+          .timeout(const Duration(seconds: 4));
       if (response.statusCode == 200) {
-        return json.decode(response.body) as Map<String, dynamic>;
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        return HealthDetails.fromJson(data);
       }
-      return {'backend': 'unreachable', 'hindsight': 'unreachable'};
+      return HealthDetails(
+        status: 'offline',
+        backend: 'unreachable',
+        hindsight: 'unreachable',
+        database: 'unreachable',
+      );
     } catch (_) {
-      return {'backend': 'unreachable', 'hindsight': 'unreachable'};
+      return HealthDetails(
+        status: 'offline',
+        backend: 'unreachable',
+        hindsight: 'unreachable',
+        database: 'unreachable',
+      );
+    }
+  }
+
+  /// Legacy map format health check
+  Future<Map<String, dynamic>> getSystemHealth() async {
+    final details = await getHealthDetails();
+    return {
+      'status': details.status,
+      'backend': details.backend,
+      'hindsight': details.hindsight,
+      'database': details.database,
+    };
+  }
+
+  /// Fetch Mental Models from Hindsight
+  Future<List<MentalModelItem>> getMentalModels() async {
+    try {
+      final response = await _client
+          .get(Uri.parse('$baseUrl/memory/mental-models'))
+          .timeout(const Duration(seconds: 6));
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        final items = data['items'] as List<dynamic>? ?? [];
+        return items.map((e) => MentalModelItem.fromJson(e as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (_) {
+      return [];
     }
   }
 
@@ -156,15 +197,17 @@ class ApiService {
     throw Exception('Failed to search messages');
   }
 
-  /// SSE Stream Chat Turn
+  /// SSE Stream Chat Turn according to MOBILE_SPEC.md Section 5
   Future<StreamSubscription<String>> streamChat({
     required String sessionId,
     required String message,
+    String? messageId,
     String? recallBudget,
     String? thinkingEffort,
     String? verbosity,
     bool isTemporary = false,
-    required Function() onThinking,
+    required Function(String status) onStatusText,
+    required Function(String reasoningDelta) onReasoningDelta,
     required Function(String query) onToolStart,
     required Function() onToolDone,
     required Function(String deltaText) onDelta,
@@ -174,9 +217,11 @@ class ApiService {
   }) async {
     final request = http.Request('POST', Uri.parse('$baseUrl/chat/stream'));
     request.headers['Content-Type'] = 'application/json';
+    request.headers['Accept'] = 'text/event-stream';
     request.body = json.encode({
       'session_id': sessionId,
       'message': message,
+      if (messageId != null) 'message_id': messageId,
       if (recallBudget != null) 'recall_budget': recallBudget,
       if (thinkingEffort != null) 'thinking_effort': thinkingEffort,
       if (verbosity != null) 'verbosity': verbosity,
@@ -193,61 +238,79 @@ class ApiService {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .listen(
-      (line) {
-        if (line.isEmpty) return;
+        (line) {
+          if (line.isEmpty) return;
 
-        if (line.startsWith('event: ')) {
-          currentEvent = line.substring(7).trim();
-        } else if (line.startsWith('data: ')) {
-          final dataStr = line.substring(6).trim();
-          try {
-            final dataObj = json.decode(dataStr) as Map<String, dynamic>;
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('data: ')) {
+            final dataStr = line.substring(6).trim();
+            try {
+              final dataObj = json.decode(dataStr) as Map<String, dynamic>;
 
-            if (currentEvent == 'session_renamed') {
-              final name = dataObj['name'] as String?;
-              if (name != null && onSessionRenamed != null) {
-                onSessionRenamed(name);
+              if (currentEvent == 'session_renamed') {
+                final name = dataObj['name'] as String?;
+                if (name != null && onSessionRenamed != null) {
+                  onSessionRenamed(name);
+                }
+              } else if (currentEvent == 'status') {
+                final text = dataObj['text'] as String? ?? 'Thinking';
+                onStatusText(text);
+              } else if (currentEvent == 'agentic_step') {
+                final msg = dataObj['message'] as String? ?? dataObj['step'] as String? ?? 'Planning';
+                onStatusText(msg);
+              } else if (currentEvent == 'thinking') {
+                onStatusText('Thinking');
+              } else if (currentEvent == 'reasoning_delta') {
+                final rText = dataObj['text'] as String? ?? '';
+                onReasoningDelta(rText);
+              } else if (currentEvent == 'tool_start') {
+                final tool = dataObj['tool'] as String? ?? '';
+                final query = dataObj['query'] as String? ?? '';
+                if (tool == 'tavily_search') {
+                  onStatusText('Searching');
+                } else if (tool == 'consult_memory') {
+                  onStatusText('Consulting memory');
+                } else if (tool == 'read_mental_model') {
+                  onStatusText('Fetching mental model');
+                } else {
+                  onStatusText('Working...');
+                }
+                onToolStart(query);
+              } else if (currentEvent == 'tool_done') {
+                onToolDone();
+              } else if (currentEvent == 'delta') {
+                final text = dataObj['text'] as String? ?? '';
+                fullAssistantText += text;
+                onDelta(text);
+              } else if (currentEvent == 'complete') {
+                final text = dataObj['text'] as String? ?? fullAssistantText;
+                final memoryStatus = dataObj['memory_status'] as String? ?? 'ok';
+                final usage = (dataObj['usage'] as Map<String, dynamic>?) ?? {};
+                onComplete(text, memoryStatus, usage);
+              } else if (currentEvent == 'error') {
+                final err = dataObj['error'] as String? ?? 'Unknown error';
+                onError(err);
               }
-            } else if (currentEvent == 'thinking') {
-              onThinking();
-            } else if (currentEvent == 'tool_start') {
-              final query = dataObj['query'] as String? ?? '';
-              onToolStart(query);
-            } else if (currentEvent == 'tool_done') {
-              onToolDone();
-            } else if (currentEvent == 'delta') {
-              final text = dataObj['text'] as String? ?? '';
-              fullAssistantText += text;
-              onDelta(text);
-            } else if (currentEvent == 'complete') {
-              final text = dataObj['text'] as String? ?? fullAssistantText;
-              final memoryStatus = dataObj['memory_status'] as String? ?? 'ok';
-              final usage = (dataObj['usage'] as Map<String, dynamic>?) ?? {};
-              onComplete(text, memoryStatus, usage);
-            } else if (currentEvent == 'error') {
-              final err = dataObj['error'] as String? ?? 'Unknown error';
-              onError(err);
-            }
-          } catch (e) {
-            // Non-JSON or raw text data
-            if (currentEvent == 'delta') {
-              fullAssistantText += dataStr;
-              onDelta(dataStr);
+            } catch (_) {
+              if (currentEvent == 'delta') {
+                fullAssistantText += dataStr;
+                onDelta(dataStr);
+              }
             }
           }
-        }
-      },
-      onError: (err) {
-        onError(err.toString());
-        streamClient.close();
-      },
-      onDone: () {
-        streamClient.close();
-      },
-      cancelOnError: true,
-    );
+        },
+        onError: (err) {
+          onError(err.toString());
+          streamClient.close();
+        },
+        onDone: () {
+          streamClient.close();
+        },
+        cancelOnError: true,
+      );
 
-    return subscription;
+      return subscription;
     } catch (e) {
       onError(e.toString());
       streamClient.close();

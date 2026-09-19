@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/chat_provider.dart';
+import 'theme/velocity_colors.dart';
 import 'views/main_screen.dart';
 
 void main() {
@@ -30,8 +31,8 @@ class VelocityApp extends StatelessWidget {
         useMaterial3: true,
         brightness: Brightness.light,
         fontFamily: 'Satoshi',
-        scaffoldBackgroundColor: const Color(0xFFFFFFFF),
-        cardColor: const Color(0xFFF4F4F5),
+        scaffoldBackgroundColor: VelocityColors.lightBgPrimary,
+        cardColor: VelocityColors.lightBgCard,
         dividerColor: Colors.transparent,
         scrollbarTheme: const ScrollbarThemeData(
           thumbVisibility: WidgetStatePropertyAll(false),
@@ -45,19 +46,19 @@ class VelocityApp extends StatelessWidget {
           labelMedium: TextStyle(fontFamily: 'Satoshi', fontWeight: FontWeight.w500),
         ),
         colorScheme: const ColorScheme.light(
-          primary: Color(0xFF000000),
-          surface: Color(0xFFF4F4F5),
-          surfaceContainer: Color(0xFFECECEE),
-          outline: Color(0xFFE4E4E7),
-          onSurface: Color(0xFF09090B),
+          primary: VelocityColors.lightTextPrimary,
+          surface: VelocityColors.lightBgCard,
+          surfaceContainer: VelocityColors.lightBgCardHover,
+          outline: VelocityColors.lightBgPill,
+          onSurface: VelocityColors.lightTextPrimary,
         ),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         fontFamily: 'Satoshi',
-        scaffoldBackgroundColor: const Color(0xFF000000), // Pitch Black
-        cardColor: const Color(0xFF0A0A0A),
+        scaffoldBackgroundColor: VelocityColors.darkBgPrimary, // Pitch Black OLED
+        cardColor: VelocityColors.darkBgCard,
         dividerColor: Colors.transparent,
         scrollbarTheme: const ScrollbarThemeData(
           thumbVisibility: WidgetStatePropertyAll(false),
@@ -71,11 +72,11 @@ class VelocityApp extends StatelessWidget {
           labelMedium: TextStyle(fontFamily: 'Satoshi', fontWeight: FontWeight.w500),
         ),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFFFFFFF),
-          surface: Color(0xFF0A0A0A),
-          surfaceContainer: Color(0xFF141414),
-          outline: Color(0xFF1E1E1E),
-          onSurface: Color(0xFFFAFAFA),
+          primary: VelocityColors.darkTextPrimary,
+          surface: VelocityColors.darkBgCard,
+          surfaceContainer: VelocityColors.darkBgCardHover,
+          outline: VelocityColors.darkBgPill,
+          onSurface: VelocityColors.darkTextPrimary,
         ),
       ),
       home: const MainScreen(),
