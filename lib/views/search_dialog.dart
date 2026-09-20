@@ -130,8 +130,8 @@ class _SearchDialogState extends State<SearchDialog> {
     Color textPrimary,
     Color textMuted,
   ) {
-    final cleanSnippet = result.snippet.replaceAll('<mark>', '**').replaceAll('</mark>', '**');
     final tileBg = isDark ? VelocityColors.darkBgCard : VelocityColors.lightBgCard;
+    final matchColor = isDark ? VelocityColors.darkAccentBlue : VelocityColors.lightAccentBlue;
 
     return InkWell(
       borderRadius: BorderRadius.circular(10),
@@ -182,19 +182,45 @@ class _SearchDialogState extends State<SearchDialog> {
               ],
             ),
             const SizedBox(height: 6),
-            Text(
-              cleanSnippet,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w500,
-                color: textPrimary,
-                height: 1.4,
-              ),
-            ),
+            _buildHighlightedSnippet(result.snippet, textPrimary, matchColor),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHighlightedSnippet(String snippet, Color textColor, Color matchColor) {
+    final spans = <TextSpan>[];
+    final regex = RegExp(r'<mark>(.*?)</mark>');
+    int lastIndex = 0;
+    for (final match in regex.allMatches(snippet)) {
+      if (match.start > lastIndex) {
+        spans.add(TextSpan(text: snippet.substring(lastIndex, match.start)));
+      }
+      spans.add(TextSpan(
+        text: match.group(1),
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: matchColor,
+        ),
+      ));
+      lastIndex = match.end;
+    }
+    if (lastIndex < snippet.length) {
+      spans.add(TextSpan(text: snippet.substring(lastIndex)));
+    }
+    return RichText(
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: TextStyle(
+          fontFamily: 'Satoshi',
+          fontSize: 13.5,
+          fontWeight: FontWeight.w500,
+          color: textColor,
+          height: 1.4,
+        ),
+        children: spans,
       ),
     );
   }

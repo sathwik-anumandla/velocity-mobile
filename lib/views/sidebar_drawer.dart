@@ -5,16 +5,18 @@ import 'package:provider/provider.dart';
 import '../models/session.dart';
 import '../providers/chat_provider.dart';
 import '../theme/velocity_colors.dart';
-import '../widgets/velocity_mark.dart';
 import 'health_details_sheet.dart';
 import 'memory_inspector_sheet.dart';
 import 'search_dialog.dart';
+import 'onboarding_screen.dart';
+import '../services/auth_service.dart';
 
 class SidebarDrawer extends StatelessWidget {
   const SidebarDrawer({super.key});
 
   void _showRenameDialog(BuildContext context, ChatProvider provider, Session session) {
     final controller = TextEditingController(text: session.name);
+    controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     showDialog(
@@ -26,6 +28,7 @@ class SidebarDrawer extends StatelessWidget {
         content: TextField(
           controller: controller,
           autofocus: true,
+          textInputAction: TextInputAction.done,
           style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
             hintText: 'Enter conversation title...',
@@ -37,8 +40,9 @@ class SidebarDrawer extends StatelessWidget {
             ),
           ),
           onSubmitted: (val) {
-            if (val.trim().isNotEmpty) {
-              provider.renameSession(session.id, val.trim());
+            final text = val.trim();
+            if (text.isNotEmpty) {
+              provider.renameSession(session.id, text);
               HapticFeedback.mediumImpact();
             }
             Navigator.of(ctx).pop();
@@ -54,13 +58,66 @@ class SidebarDrawer extends StatelessWidget {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
             onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
-                provider.renameSession(session.id, controller.text.trim());
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                provider.renameSession(session.id, text);
                 HapticFeedback.mediumImpact();
               }
               Navigator.of(ctx).pop();
             },
-            child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w700)),
+            child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteSession(BuildContext context, ChatProvider provider, Session session) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgModal = isDark ? VelocityColors.darkBgModal : VelocityColors.lightBgModal;
+    final textPrimary = isDark ? VelocityColors.darkTextPrimary : VelocityColors.lightTextPrimary;
+    final textMuted = isDark ? VelocityColors.darkTextMuted : VelocityColors.lightTextMuted;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: bgModal,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Delete Conversation',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: textPrimary,
+            letterSpacing: -0.3,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to delete "${session.name}"? This action cannot be undone.',
+          style: TextStyle(
+            fontSize: 13.5,
+            color: textMuted,
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Cancel', style: TextStyle(color: textMuted, fontWeight: FontWeight.w600)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              HapticFeedback.mediumImpact();
+              provider.deleteSession(session.id);
+            },
+            child: const Text(
+              'Delete',
+              style: TextStyle(
+                color: VelocityColors.statusOffline,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -100,10 +157,14 @@ class SidebarDrawer extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      VelocityBrandLogo(
-                        markSize: 18,
-                        fontSize: 20,
-                        color: textPrimary,
+                      Text(
+                        'Velocity',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: textPrimary,
+                          letterSpacing: -0.3,
+                        ),
                       ),
                       const Spacer(),
                       IconButton(
@@ -169,6 +230,7 @@ class SidebarDrawer extends StatelessWidget {
                           ),
                         )
                       : ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           itemCount: provider.sessions.length,
                           itemBuilder: (context, index) {
@@ -213,7 +275,7 @@ class SidebarDrawer extends StatelessWidget {
                                               _showRenameDialog(context, provider, session);
                                             } else if (val == 'delete') {
                                               HapticFeedback.mediumImpact();
-                                              provider.deleteSession(session.id);
+                                              _confirmDeleteSession(context, provider, session);
                                             }
                                           },
                                           itemBuilder: (ctx) => [
@@ -326,11 +388,87 @@ class SidebarDrawer extends StatelessWidget {
                       provider.toggleTheme();
                     },
                   ),
+                  const SizedBox(width: 4),
+                  // Right: Disconnect / Logout Server
+                  IconButton(
+                    tooltip: 'Disconnect Server',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                    icon: Icon(
+                      LucideIcons.logOut,
+                      size: 17,
+                      color: textMuted,
+                    ),
+                    onPressed: () {
+                      HapticFeedback.selectionClick();
+                      _confirmDisconnect(context, provider);
+                    },
+                  ),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _confirmDisconnect(BuildContext context, ChatProvider provider) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgModal = isDark ? VelocityColors.darkBgModal : VelocityColors.lightBgModal;
+    final textPrimary = isDark ? VelocityColors.darkTextPrimary : VelocityColors.lightTextPrimary;
+    final textMuted = isDark ? VelocityColors.darkTextMuted : VelocityColors.lightTextMuted;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: bgModal,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Disconnect Server',
+          style: TextStyle(
+            fontFamily: 'Satoshi',
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: textPrimary,
+          ),
+        ),
+        content: Text(
+          'This will remove stored Cloudflare Zero Trust credentials. You will need to scan the pairing QR code again to reconnect.',
+          style: TextStyle(
+            fontFamily: 'Satoshi',
+            fontSize: 13.5,
+            color: textMuted,
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Cancel', style: TextStyle(fontFamily: 'Satoshi', color: textMuted)),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await AuthService.logout();
+              provider.resetState();
+              if (context.mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+                  (route) => false,
+                );
+              }
+            },
+            child: const Text(
+              'Disconnect',
+              style: TextStyle(
+                fontFamily: 'Satoshi',
+                color: VelocityColors.statusOffline,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

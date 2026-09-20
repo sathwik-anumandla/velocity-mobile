@@ -1,28 +1,30 @@
 # Velocity Mobile
 
-Velocity Mobile is the official Flutter client for the Velocity Personal AI Assistant. It features a borderless monochrome aesthetic, true OLED pitch black theming, real-time Server-Sent Events (SSE) streaming, tactile haptics, and deep memory integration powered by Hindsight.
+Velocity Mobile is the official Flutter client for the Velocity Personal AI Assistant. It features a borderless monochrome aesthetic, true OLED pitch black theming, real-time Server-Sent Events (SSE) streaming, tactile haptics, Cloudflare Zero Trust authentication via QR code pairing, and deep memory integration powered by Hindsight.
 
 ---
 
 ## Features
 
 - **Borderless Design System**: A pure dark interface utilizing true pitch black (#000000) for OLED displays and layered surface hierarchy without harsh divider lines or outlines.
-- **Brand Identity**: Features the VelocityMark angle bracket mark alongside lowercase velocity in Satoshi Medium.
+- **Cloudflare Zero Trust Authentication**: 1-second camera QR code pairing from `chat.sathwik.work/mobile` with secure hardware-backed keychain/keystore storage (`flutter_secure_storage`) and manual JSON payload fallback.
 - **Real-Time SSE Streaming**: Live token-by-token streaming response delivery with Server-Sent Events.
 - **Cognitive Status Shimmer**: GlowingShimmerText widget with a 2.2-second ease-in-out radiant gradient wave indicating real-time cognitive phases (Fetching recall, Fetching mental model, Thinking, Searching...).
-- **Slide-Over Navigation Drawer**: Clean, flat list of past conversations with in-place rename and delete capabilities.
+- **Slide-Over Navigation Drawer**: Flat list of past conversations with in-place rename (with automatic text pre-selection and keyboard Done submission) and permanent deletion confirmation dialog.
 - **Mobile Ergonomics**:
   - Input capsule docked to the bottom by default, floating smoothly above the software keyboard when active.
   - Automatic keyboard focus on fresh app launch and new chat creation.
   - Keyboard automatically dismissed when opening previous chats or after sending a prompt.
-  - Prompt scrolls to the top of the chat area upon submission with the assistant response streaming underneath.
+  - Prompt scrolls smoothly to the top of the chat area upon submission with the assistant response streaming underneath.
   - Prompt long-press context menu positioned directly near the bubble with Copy and inline Edit Text.
   - Icon-only Copy and Regenerate buttons for assistant responses.
+  - Inline Retry action on failed assistant messages.
+  - Fluid bouncing scroll physics across chat messages and navigation drawer lists.
   - Smart floating scroll-to-bottom button when scrolled up.
 - **Generation Parameters**: Modal bottom sheet for configuring reasoning effort (none to max), memory recall budget (low to high), and response verbosity (low to high) with tactile haptic feedback.
 - **Memory Inspector**: Draggable bottom sheet for inspecting synthesized Hindsight mental models across categories (Current Context, User Persona, Projects & Decisions, Goals & Interests).
 - **System Health Monitor**: Typography-driven status sheet inspecting backend, database (SQLite FTS5), and memory health.
-- **Global Search**: Full-text search (FTS5) dialog across all conversation histories.
+- **Global Search**: Full-text search (FTS5) dialog across all conversation histories with search term highlight styling.
 
 ---
 
@@ -40,7 +42,8 @@ lib/
 ├── providers/
 │   └── chat_provider.dart         # Core state management (sessions, streaming, parameters, theme)
 ├── services/
-│   └── api_service.dart           # HTTP & SSE client for backend communication
+│   ├── api_service.dart           # HTTP & SSE client with Cloudflare Zero Trust headers
+│   └── auth_service.dart          # Secure credential storage and QR payload handling
 ├── theme/
 │   └── velocity_colors.dart       # Comprehensive dark/light color tokens
 ├── views/
@@ -48,13 +51,14 @@ lib/
 │   ├── health_details_sheet.dart  # System health details modal sheet
 │   ├── main_screen.dart           # Root scaffold holding the slide-over drawer and chat view
 │   ├── memory_inspector_sheet.dart# Draggable bottom sheet for Hindsight mental models
+│   ├── onboarding_screen.dart     # QR code scanner onboarding with manual paste fallback
 │   ├── options_bottom_sheet.dart  # Modal bottom sheet for generation parameters
-│   ├── search_dialog.dart         # Full-text search dialog
-│   └── sidebar_drawer.dart        # Slide-over navigation drawer
+│   ├── search_dialog.dart         # Full-text search dialog with match highlighting
+│   └── sidebar_drawer.dart        # Slide-over navigation drawer with delete confirmations
 └── widgets/
     ├── glowing_shimmer_text.dart  # Flowing gradient shimmer text widget
     ├── shimmer_text.dart          # Shimmer widget export
-    └── velocity_mark.dart         # VelocityMark custom paint widget and brand logo
+    └── velocity_mark.dart         # VelocityMark custom paint widget and brand mark
 ```
 
 ---
@@ -65,7 +69,7 @@ lib/
 
 - Flutter SDK (>= 3.0.0 < 4.0.0)
 - Android SDK / Xcode for mobile compilation
-- Velocity backend server running (default port: 8000)
+- Velocity backend server running
 
 ### Installation
 
@@ -81,25 +85,25 @@ lib/
    ```
 
 3. Run the application:
-   - For Android Emulator:
-     ```bash
-     flutter run
-     ```
-   - For a physical Android device over Wi-Fi:
-     ```bash
-     flutter run --dart-define=API_URL=http://<YOUR_COMPUTER_IP>:8000
-     ```
-   - For a physical Android device over USB cable:
-     ```bash
-     adb reverse tcp:8000 tcp:8000
-     flutter run
-     ```
+   ```bash
+   flutter run
+   ```
 
 ### Building the APK
 
-To generate a debug APK with a custom backend URL:
+To generate a release APK:
 ```bash
-flutter build apk --debug --dart-define=API_URL=http://<YOUR_BACKEND_IP>:8000
+flutter build apk --release
+```
+
+The output file will be located at:
+```text
+build/app/outputs/flutter-apk/app-release.apk
+```
+
+To generate a debug APK:
+```bash
+flutter build apk --debug
 ```
 
 The output file will be located at:

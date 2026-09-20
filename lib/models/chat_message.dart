@@ -1,6 +1,6 @@
 class ChatMessage {
   final String id;
-  final String sessionId;
+  String sessionId;
   final String role; // 'user' | 'assistant' | 'system'
   String content;
   final DateTime createdAt;

@@ -1,23 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/chat_provider.dart';
+import 'services/auth_service.dart';
 import 'theme/velocity_colors.dart';
 import 'views/main_screen.dart';
+import 'views/onboarding_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final hasCredentials = await AuthService.hasCredentials();
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ChatProvider()),
       ],
-      child: const VelocityApp(),
+      child: VelocityApp(hasCredentials: hasCredentials),
     ),
   );
 }
 
 class VelocityApp extends StatelessWidget {
-  const VelocityApp({super.key});
+  final bool hasCredentials;
+  const VelocityApp({super.key, this.hasCredentials = true});
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +83,7 @@ class VelocityApp extends StatelessWidget {
           onSurface: VelocityColors.darkTextPrimary,
         ),
       ),
-      home: const MainScreen(),
+      home: hasCredentials ? const MainScreen() : const OnboardingScreen(),
     );
   }
 }

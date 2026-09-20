@@ -7,6 +7,7 @@ import '../models/search_result.dart';
 import '../models/health_details.dart';
 import '../models/mental_model_item.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
@@ -101,18 +102,74 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> init() async {
+    final hasCreds = await AuthService.hasCredentials();
+    if (!hasCreds) {
+      _isBackendOnline = false;
+      notifyListeners();
+      return;
+    }
+    final url = await AuthService.getBaseUrl();
+    _api.baseUrl = url;
     await checkBackendHealth();
     if (_isBackendOnline) {
       await loadSessions();
     }
   }
 
+  Future<void> onCredentialsConfigured() async {
+    final url = await AuthService.getBaseUrl();
+    _api.baseUrl = url;
+    await checkBackendHealth();
+    if (_isBackendOnline) {
+      await loadSessions();
+    }
+  }
+
+  void resetState() {
+    _streamSub?.cancel();
+    _messages = [];
+    _currentSession = null;
+    _sessions = [];
+    _openTabIds.clear();
+    _isBackendOnline = false;
+    _healthDetails = null;
+    _isGenerating = false;
+    _isThinking = false;
+    _isTemporaryMode = false;
+    notifyListeners();
+  }
+
+  String get serverUrl => _api.baseUrl;
+
+  Future<void> updateServerUrl(String newUrl) async {
+    String cleanUrl = newUrl.trim();
+    if (cleanUrl.isNotEmpty && !cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = 'http://$cleanUrl';
+    }
+    if (cleanUrl.endsWith('/')) {
+      cleanUrl = cleanUrl.substring(0, cleanUrl.length - 1);
+    }
+    if (cleanUrl.isNotEmpty) {
+      _api.baseUrl = cleanUrl;
+      await checkBackendHealth();
+    }
+  }
+
   Future<void> checkBackendHealth() async {
-    final details = await _api.getHealthDetails();
+    HealthDetails details = await _api.getHealthDetails();
+    if (details.backend != 'healthy') {
+      final found = await _api.autoDiscoverBackend();
+      if (found) {
+        details = await _api.getHealthDetails();
+      }
+    }
     _healthDetails = details;
     _isBackendOnline = details.backend == 'healthy';
     _isHindsightHealthy = details.hindsight == 'healthy';
     notifyListeners();
+    if (_isBackendOnline && _sessions.isEmpty && !_isLoadingSessions) {
+      await loadSessions();
+    }
   }
 
   Future<void> loadMentalModels() async {
@@ -380,9 +437,10 @@ class ChatProvider extends ChangeNotifier {
     final cleanText = text.trim();
     if (cleanText.isEmpty || _isGenerating) return;
 
+    bool needsSessionCreation = false;
     if (_currentSession == null) {
+      final now = DateTime.now();
       if (_isTemporaryMode) {
-        final now = DateTime.now();
         final tempId = 'temp-${now.millisecondsSinceEpoch}';
         _currentSession = Session(
           id: tempId,
@@ -395,19 +453,18 @@ class ChatProvider extends ChangeNotifier {
           isTemporary: true,
         );
       } else {
-        try {
-          final newSess = await _api.createSession(
-            name: 'New Chat',
-            recallBudget: _recallBudget,
-            thinkingEffort: _thinkingEffort,
-            verbosity: _verbosity,
-          );
-          _sessions.insert(0, newSess);
-          _currentSession = newSess;
-        } catch (e) {
-          debugPrint('Error creating session: $e');
-          return;
-        }
+        needsSessionCreation = true;
+        final tempId = 'pending-${now.millisecondsSinceEpoch}';
+        _currentSession = Session(
+          id: tempId,
+          name: 'New Chat',
+          recallBudget: _recallBudget,
+          thinkingEffort: _thinkingEffort,
+          verbosity: _verbosity,
+          createdAt: now,
+          updatedAt: now,
+          isTemporary: false,
+        );
       }
     }
     final session = _currentSession!;
@@ -459,8 +516,36 @@ class ChatProvider extends ChangeNotifier {
 
     notifyListeners();
 
+    String targetSessionId = session.id;
+    if (needsSessionCreation) {
+      try {
+        final newSess = await _api.createSession(
+          name: 'New Chat',
+          recallBudget: _recallBudget,
+          thinkingEffort: _thinkingEffort,
+          verbosity: _verbosity,
+        );
+        _sessions.insert(0, newSess);
+        _openTabIds.remove(session.id);
+        _openTabIds.add(newSess.id);
+        _currentSession = newSess;
+        targetSessionId = newSess.id;
+        userMsg.sessionId = newSess.id;
+        assistantMsg.sessionId = newSess.id;
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Error creating session: $e');
+        _isGenerating = false;
+        _isThinking = false;
+        _elapsedTimer?.cancel();
+        _messages.remove(assistantMsg);
+        notifyListeners();
+        return;
+      }
+    }
+
     _streamSub = await _api.streamChat(
-      sessionId: session.id,
+      sessionId: targetSessionId,
       message: cleanText,
       messageId: messageId,
       recallBudget: currentRecallBudget,

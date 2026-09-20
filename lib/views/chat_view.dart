@@ -11,7 +11,6 @@ import '../providers/chat_provider.dart';
 import '../models/chat_message.dart';
 import '../theme/velocity_colors.dart';
 import '../widgets/glowing_shimmer_text.dart';
-import '../widgets/velocity_mark.dart';
 import 'options_bottom_sheet.dart';
 
 class ChatView extends StatefulWidget {
@@ -33,10 +32,15 @@ class _ChatViewState extends State<ChatView> {
   final TextEditingController _editController = TextEditingController();
   String? _copiedId;
   Timer? _copyTimer;
+  Timer? _initFocusTimer;
 
   String? _lastSessionId;
   bool _wasLoadingMessages = false;
   int _lastMessageCount = 0;
+
+  final GlobalKey _lastUserPromptKey = GlobalKey();
+  bool _justSubmittedPrompt = false;
+  bool _isKeyboardOpen = false;
 
   @override
   void initState() {
@@ -46,7 +50,7 @@ class _ChatViewState extends State<ChatView> {
 
     // Fix #3: Open keyboard by default on fresh open
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 250), () {
+      _initFocusTimer = Timer(const Duration(milliseconds: 250), () {
         if (mounted && context.read<ChatProvider>().currentSession == null && context.read<ChatProvider>().messages.isEmpty) {
           _focusNode.requestFocus();
         }
@@ -65,20 +69,17 @@ class _ChatViewState extends State<ChatView> {
 
   void _onScrollChanged() {
     if (!_scrollController.hasClients) return;
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final currentScroll = _scrollController.position.pixels;
-    final distanceToBottom = maxScroll - currentScroll;
-
-    final shouldShow = distanceToBottom > 120;
-    if (shouldShow != _showScrollToBottom) {
+    final isNearBottom = _scrollController.position.maxScrollExtent - _scrollController.position.pixels < 120;
+    if (_showScrollToBottom != !isNearBottom) {
       setState(() {
-        _showScrollToBottom = shouldShow;
+        _showScrollToBottom = !isNearBottom;
       });
     }
   }
 
   @override
   void dispose() {
+    _initFocusTimer?.cancel();
     _inputController.removeListener(_onInputChanged);
     _scrollController.removeListener(_onScrollChanged);
     _copyTimer?.cancel();
@@ -101,31 +102,52 @@ class _ChatViewState extends State<ChatView> {
     });
   }
 
+  void _scrollToPromptTop() {
+    if (!_scrollController.hasClients) return;
+
+    if (_lastUserPromptKey.currentContext != null) {
+      Scrollable.ensureVisible(
+        _lastUserPromptKey.currentContext!,
+        alignment: 0.0,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    } else {
+      _scrollController.animateTo(
+        0.0,
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   void _handleSubmit() {
     final text = _inputController.text;
     if (text.trim().isEmpty) return;
     HapticFeedback.lightImpact();
     _inputController.clear();
-    // Dismiss keyboard immediately upon sending
+
+    _justSubmittedPrompt = true;
     _focusNode.unfocus();
 
-    final isNewChat = context.read<ChatProvider>().messages.isEmpty;
     context.read<ChatProvider>().sendMessage(text);
 
-    if (isNewChat) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(0.0);
-        }
-      });
-      Future.delayed(const Duration(milliseconds: 150), () {
-        if (mounted && _scrollController.hasClients && context.read<ChatProvider>().messages.length <= 2) {
-          _scrollController.jumpTo(0.0);
-        }
-      });
-    } else {
-      _scrollToBottom();
-    }
+    // Fix 2: Prompt goes up till the top of display (below the title)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToPromptTop();
+    });
+    Future.delayed(const Duration(milliseconds: 60), () {
+      if (mounted) _scrollToPromptTop();
+    });
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) _scrollToPromptTop();
+    });
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) {
+        _scrollToPromptTop();
+        _justSubmittedPrompt = false;
+      }
+    });
   }
 
   void _copyToClipboard(String id, String text) {
@@ -242,22 +264,52 @@ class _ChatViewState extends State<ChatView> {
           }
         });
       }
-      final wasNewChat = _lastMessageCount == 0;
       _lastMessageCount = provider.messages.length;
-      if (wasNewChat) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.jumpTo(0.0);
+      if (!_justSubmittedPrompt) {
+        if (_scrollController.hasClients) {
+          final maxScroll = _scrollController.position.maxScrollExtent;
+          final currentScroll = _scrollController.position.pixels;
+          if (maxScroll - currentScroll < 120) {
+            _scrollToBottom();
           }
-        });
-      } else {
-        _scrollToBottom();
+        }
       }
     }
     _wasLoadingMessages = provider.isLoadingMessages;
 
-    final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-    final showFloatingScrollButton = _showScrollToBottom && !isKeyboardOpen && provider.messages.isNotEmpty;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final isKeyboardNowOpen = bottomInset > 0;
+
+    if (isKeyboardNowOpen != _isKeyboardOpen) {
+      final wasOpen = _isKeyboardOpen;
+      _isKeyboardOpen = isKeyboardNowOpen;
+
+      if (isKeyboardNowOpen && !wasOpen) {
+        // Fix 1: When opening keyboard in previous chat, bottom of chat goes UP above keyboard
+        if (!_justSubmittedPrompt && provider.messages.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom();
+          });
+        }
+      } else if (!isKeyboardNowOpen && wasOpen) {
+        // Fix 1: When closing keyboard, bottom of chat goes DOWN
+        if (!_justSubmittedPrompt && provider.messages.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              if (_scrollController.position.pixels > _scrollController.position.maxScrollExtent) {
+                _scrollController.animateTo(
+                  _scrollController.position.maxScrollExtent,
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutQuad,
+                );
+              }
+            }
+          });
+        }
+      }
+    }
+
+    final showFloatingScrollButton = _showScrollToBottom && !isKeyboardNowOpen && provider.messages.isNotEmpty;
 
     // Fix #1: Proper top spacing accounting for notch / status bar with reduced bottom padding
     final topPadding = MediaQuery.of(context).padding.top;
@@ -300,9 +352,15 @@ class _ChatViewState extends State<ChatView> {
                   // Messages Stream
                   Expanded(
                     child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
                       controller: _scrollController,
                       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        8,
+                        16,
+                        provider.isGenerating ? MediaQuery.of(context).size.height * 0.75 : 90,
+                      ),
                       itemCount: provider.messages.length,
                       itemBuilder: (ctx, idx) {
                         final msg = provider.messages[idx];
@@ -440,10 +498,17 @@ class _ChatViewState extends State<ChatView> {
                             ),
                           )
                         : (provider.currentSession == null
-                            ? VelocityBrandLogo(
-                                markSize: 15,
-                                fontSize: 16.5,
-                                color: textPrimary,
+                            ? Text(
+                                'Velocity',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: textPrimary,
+                                  letterSpacing: -0.2,
+                                ),
                               )
                             : Text(
                                 provider.currentSession!.name,
@@ -497,6 +562,7 @@ class _ChatViewState extends State<ChatView> {
   ) {
     if (msg.isUser) {
       Offset tapPosition = Offset.zero;
+      final isLastUser = index == provider.messages.lastIndexWhere((m) => m.isUser);
 
       if (_editingMessageIndex == index) {
         // Inline Edit Mode
@@ -560,6 +626,7 @@ class _ChatViewState extends State<ChatView> {
       }
 
       return GestureDetector(
+        key: isLastUser ? _lastUserPromptKey : null,
         onTapDown: (details) => tapPosition = details.globalPosition,
         onLongPress: () => _showPromptContextMenu(context, msg, index, tapPosition),
         child: Align(
@@ -666,39 +733,79 @@ class _ChatViewState extends State<ChatView> {
                 ),
               ),
 
-            // Assistant Actions: Copy and Regenerate buttons (ONLY ICONS, NO TEXT)
+            // Assistant Actions: Retry button if error, else Copy and Regenerate buttons (ONLY ICONS, NO TEXT)
             if (!provider.isGenerating && msg.content.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    InkWell(
-                      borderRadius: BorderRadius.circular(6),
-                      onTap: () => _copyToClipboard('assistant_${msg.id}', msg.content),
-                      child: Padding(
-                        padding: const EdgeInsets.all(6),
-                        child: Icon(
-                          _copiedId == 'assistant_${msg.id}' ? LucideIcons.check : LucideIcons.copy,
-                          size: 15,
-                          color: _copiedId == 'assistant_${msg.id}' ? textPrimary : textMuted,
+                child: (msg.content.startsWith('[Error:') ||
+                        msg.content.startsWith('I encountered an issue generating a response:') ||
+                        msg.content.startsWith('Error:'))
+                    ? Align(
+                        alignment: Alignment.centerLeft,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            provider.regenerateLastAssistant();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isDark ? VelocityColors.darkBgCard : VelocityColors.lightBgCard,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isDark ? const Color(0xFF27272A) : const Color(0xFFE4E4E7),
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(LucideIcons.rotateCcw, size: 13, color: textPrimary),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Retry',
+                                  style: TextStyle(
+                                    fontFamily: 'Satoshi',
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: textPrimary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () => _copyToClipboard('assistant_${msg.id}', msg.content),
+                            child: Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: Icon(
+                                _copiedId == 'assistant_${msg.id}' ? LucideIcons.check : LucideIcons.copy,
+                                size: 15,
+                                color: _copiedId == 'assistant_${msg.id}' ? textPrimary : textMuted,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              provider.regenerateLastAssistant();
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: Icon(LucideIcons.rotateCcw, size: 15, color: textMuted),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    InkWell(
-                      borderRadius: BorderRadius.circular(6),
-                      onTap: () {
-                        HapticFeedback.lightImpact();
-                        provider.regenerateLastAssistant();
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(6),
-                        child: Icon(LucideIcons.rotateCcw, size: 15, color: textMuted),
-                      ),
-                    ),
-                  ],
-                ),
               ),
           ],
         ),

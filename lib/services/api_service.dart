@@ -1,37 +1,85 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import '../models/session.dart';
 import '../models/chat_message.dart';
 import '../models/search_result.dart';
 import '../models/health_details.dart';
 import '../models/mental_model_item.dart';
+import 'auth_service.dart';
 
 String _getDefaultBaseUrl() {
   const envUrl = String.fromEnvironment('API_URL');
   if (envUrl.isNotEmpty) return envUrl;
-  if (!kIsWeb && Platform.isAndroid) {
-    return 'http://10.0.2.2:8000';
-  }
-  return 'http://localhost:8000';
+  return 'https://chat.sathwik.work';
 }
 
 class ApiService {
-  final String baseUrl;
+  String baseUrl;
   final http.Client _client;
 
   ApiService({String? baseUrl})
       : baseUrl = baseUrl ?? _getDefaultBaseUrl(),
         _client = http.Client();
 
+  /// Injects Cloudflare Zero Trust headers
+  Future<Map<String, String>> _headers([Map<String, String>? extra]) async {
+    final cfHeaders = await AuthService.getHeaders();
+    if (extra != null) {
+      cfHeaders.addAll(extra);
+    }
+    return cfHeaders;
+  }
+
+  /// Quick probe to check if a specific URL is healthy
+  Future<bool> probeUrl(String url) async {
+    try {
+      final clean = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+      final headers = await _headers();
+      final response = await _client
+          .get(Uri.parse('$clean/health'), headers: headers)
+          .timeout(const Duration(milliseconds: 2500));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['backend'] == 'healthy' || data['status'] == 'ok';
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Auto-discovers working backend URL from candidate list
+  Future<bool> autoDiscoverBackend() async {
+    final authUrl = await AuthService.getBaseUrl();
+    final candidates = [
+      baseUrl,
+      authUrl,
+      'https://chat.sathwik.work',
+      'http://192.168.0.140:8000',
+      'http://localhost:8000',
+      'http://10.0.2.2:8000',
+    ];
+
+    final seen = <String>{};
+    for (final candidate in candidates) {
+      if (candidate.isNotEmpty && seen.add(candidate)) {
+        if (await probeUrl(candidate)) {
+          baseUrl = candidate.endsWith('/') ? candidate.substring(0, candidate.length - 1) : candidate;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /// Health Check
   Future<bool> checkHealth() async {
     try {
+      final headers = await _headers();
       final response = await _client
-          .get(Uri.parse('$baseUrl/health'))
-          .timeout(const Duration(seconds: 3));
+          .get(Uri.parse('$baseUrl/health'), headers: headers)
+          .timeout(const Duration(seconds: 4));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return data['backend'] == 'healthy';
@@ -45,9 +93,10 @@ class ApiService {
   /// Full System Health Check returning HealthDetails
   Future<HealthDetails> getHealthDetails() async {
     try {
+      final headers = await _headers();
       final response = await _client
-          .get(Uri.parse('$baseUrl/health'))
-          .timeout(const Duration(seconds: 4));
+          .get(Uri.parse('$baseUrl/health'), headers: headers)
+          .timeout(const Duration(seconds: 5));
       if (response.statusCode == 200) {
         final data = json.decode(response.body) as Map<String, dynamic>;
         return HealthDetails.fromJson(data);
@@ -82,9 +131,10 @@ class ApiService {
   /// Fetch Mental Models from Hindsight
   Future<List<MentalModelItem>> getMentalModels() async {
     try {
+      final headers = await _headers();
       final response = await _client
-          .get(Uri.parse('$baseUrl/memory/mental-models'))
-          .timeout(const Duration(seconds: 6));
+          .get(Uri.parse('$baseUrl/memory/mental-models'), headers: headers)
+          .timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
         final items = data['items'] as List<dynamic>? ?? [];
@@ -98,9 +148,10 @@ class ApiService {
 
   /// List persistent sessions
   Future<List<Session>> listSessions() async {
+    final headers = await _headers();
     final response = await _client
-        .get(Uri.parse('$baseUrl/sessions'))
-        .timeout(const Duration(seconds: 5));
+        .get(Uri.parse('$baseUrl/sessions'), headers: headers)
+        .timeout(const Duration(seconds: 6));
     if (response.statusCode == 200) {
       final List<dynamic> list = json.decode(utf8.decode(response.bodyBytes));
       return list.map((item) => Session.fromJson(item as Map<String, dynamic>)).toList();
@@ -115,9 +166,10 @@ class ApiService {
     String thinkingEffort = 'medium',
     String verbosity = 'low',
   }) async {
+    final headers = await _headers({'Content-Type': 'application/json'});
     final response = await _client.post(
       Uri.parse('$baseUrl/sessions'),
-      headers: {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode({
         if (name != null && name.isNotEmpty) 'name': name,
         'recall_budget': recallBudget,
@@ -145,9 +197,10 @@ class ApiService {
     if (thinkingEffort != null) body['thinking_effort'] = thinkingEffort;
     if (verbosity != null) body['verbosity'] = verbosity;
 
+    final headers = await _headers({'Content-Type': 'application/json'});
     final response = await _client.patch(
       Uri.parse('$baseUrl/sessions/$sessionId'),
-      headers: {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(body),
     );
     if (response.statusCode == 200) {
@@ -158,7 +211,8 @@ class ApiService {
 
   /// Delete session
   Future<bool> deleteSession(String sessionId) async {
-    final response = await _client.delete(Uri.parse('$baseUrl/sessions/$sessionId'));
+    final headers = await _headers();
+    final response = await _client.delete(Uri.parse('$baseUrl/sessions/$sessionId'), headers: headers);
     return response.statusCode == 200;
   }
 
@@ -167,7 +221,8 @@ class ApiService {
     try {
       final uri = Uri.parse('$baseUrl/sessions/$sessionId/messages')
           .replace(queryParameters: {'from_message_id': fromMessageId});
-      final response = await _client.delete(uri);
+      final headers = await _headers();
+      final response = await _client.delete(uri, headers: headers);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -176,7 +231,8 @@ class ApiService {
 
   /// Get session message history
   Future<List<ChatMessage>> getSessionMessages(String sessionId) async {
-    final response = await _client.get(Uri.parse('$baseUrl/sessions/$sessionId'));
+    final headers = await _headers();
+    final response = await _client.get(Uri.parse('$baseUrl/sessions/$sessionId'), headers: headers);
     if (response.statusCode == 200) {
       final data = json.decode(utf8.decode(response.bodyBytes));
       final List<dynamic> msgList = data['messages'] ?? [];
@@ -189,7 +245,8 @@ class ApiService {
   Future<List<SearchResult>> searchMessages(String query) async {
     if (query.trim().isEmpty) return [];
     final uri = Uri.parse('$baseUrl/search').replace(queryParameters: {'q': query.trim()});
-    final response = await _client.get(uri);
+    final headers = await _headers();
+    final response = await _client.get(uri, headers: headers);
     if (response.statusCode == 200) {
       final List<dynamic> list = json.decode(utf8.decode(response.bodyBytes));
       return list.map((item) => SearchResult.fromJson(item as Map<String, dynamic>)).toList();
@@ -216,8 +273,11 @@ class ApiService {
     Function(String title)? onSessionRenamed,
   }) async {
     final request = http.Request('POST', Uri.parse('$baseUrl/chat/stream'));
-    request.headers['Content-Type'] = 'application/json';
-    request.headers['Accept'] = 'text/event-stream';
+    final headers = await _headers({
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    });
+    request.headers.addAll(headers);
     request.body = json.encode({
       'session_id': sessionId,
       'message': message,
