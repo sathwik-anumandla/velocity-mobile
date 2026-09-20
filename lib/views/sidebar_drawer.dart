@@ -124,6 +124,86 @@ class SidebarDrawer extends StatelessWidget {
     );
   }
 
+  void _showSessionContextMenu(
+    BuildContext context,
+    ChatProvider provider,
+    Session session,
+    Offset tapPosition,
+  ) async {
+    HapticFeedback.mediumImpact();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg = isDark ? VelocityColors.darkBgCard : VelocityColors.lightBgCard;
+    final textPrimary = isDark ? VelocityColors.darkTextPrimary : VelocityColors.lightTextPrimary;
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        tapPosition.dx,
+        tapPosition.dy - 10,
+        MediaQuery.of(context).size.width - tapPosition.dx,
+        MediaQuery.of(context).size.height - tapPosition.dy,
+      ),
+      color: cardBg,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        PopupMenuItem<String>(
+          value: 'rename',
+          height: 38,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.pencil, size: 14, color: textPrimary),
+              const SizedBox(width: 10),
+              Text(
+                'Rename',
+                style: TextStyle(
+                  fontFamily: 'Satoshi',
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w500,
+                  color: textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'delete',
+          height: 38,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.trash2, size: 14, color: Colors.redAccent),
+              SizedBox(width: 10),
+              Text(
+                'Delete',
+                style: TextStyle(
+                  fontFamily: 'Satoshi',
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.redAccent,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    if (selected == 'rename') {
+      HapticFeedback.selectionClick();
+      if (context.mounted) {
+        _showRenameDialog(context, provider, session);
+      }
+    } else if (selected == 'delete') {
+      HapticFeedback.mediumImpact();
+      if (context.mounted) {
+        _confirmDeleteSession(context, provider, session);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ChatProvider>();
@@ -236,6 +316,7 @@ class SidebarDrawer extends StatelessWidget {
                           itemBuilder: (context, index) {
                             final session = provider.sessions[index];
                             final isSelected = provider.currentSession?.id == session.id;
+                            Offset tapPosition = Offset.zero;
 
                             return Padding(
                               padding: const EdgeInsets.symmetric(vertical: 2),
@@ -244,13 +325,15 @@ class SidebarDrawer extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(10),
                                 child: InkWell(
                                   borderRadius: BorderRadius.circular(10),
+                                  onTapDown: (details) => tapPosition = details.globalPosition,
                                   onTap: () {
                                     HapticFeedback.lightImpact();
                                     provider.selectSession(session);
                                     Navigator.of(context).pop();
                                   },
+                                  onLongPress: () => _showSessionContextMenu(context, provider, session, tapPosition),
                                   child: Padding(
-                                    padding: const EdgeInsets.only(left: 12, right: 4, top: 9, bottom: 9),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                     child: Row(
                                       children: [
                                         Expanded(
@@ -262,52 +345,6 @@ class SidebarDrawer extends StatelessWidget {
                                               fontSize: 14,
                                               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                                               color: isSelected ? textPrimary : textSecondary,
-                                            ),
-                                          ),
-                                        ),
-                                        PopupMenuButton<String>(
-                                          padding: EdgeInsets.zero,
-                                          color: cardBg,
-                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                          onSelected: (val) {
-                                            if (val == 'rename') {
-                                              HapticFeedback.selectionClick();
-                                              _showRenameDialog(context, provider, session);
-                                            } else if (val == 'delete') {
-                                              HapticFeedback.mediumImpact();
-                                              _confirmDeleteSession(context, provider, session);
-                                            }
-                                          },
-                                          itemBuilder: (ctx) => [
-                                            PopupMenuItem(
-                                              value: 'rename',
-                                              height: 36,
-                                              child: Row(
-                                                children: [
-                                                  Icon(LucideIcons.pencil, size: 14, color: textPrimary),
-                                                  const SizedBox(width: 8),
-                                                  Text('Rename', style: TextStyle(fontSize: 13, color: textPrimary)),
-                                                ],
-                                              ),
-                                            ),
-                                            const PopupMenuItem(
-                                              value: 'delete',
-                                              height: 36,
-                                              child: Row(
-                                                children: [
-                                                  Icon(LucideIcons.trash2, size: 14, color: Colors.redAccent),
-                                                  SizedBox(width: 8),
-                                                  Text('Delete', style: TextStyle(fontSize: 13, color: Colors.redAccent)),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(4),
-                                            child: Icon(
-                                              LucideIcons.moreVertical,
-                                              size: 15,
-                                              color: textMuted,
                                             ),
                                           ),
                                         ),

@@ -33,6 +33,8 @@ class _ChatViewState extends State<ChatView> {
   String? _copiedId;
   Timer? _copyTimer;
   Timer? _initFocusTimer;
+  final List<Timer> _scrollTimers = [];
+  double _lastBottomInset = 0.0;
 
   String? _lastSessionId;
   bool _wasLoadingMessages = false;
@@ -47,6 +49,7 @@ class _ChatViewState extends State<ChatView> {
     super.initState();
     _inputController.addListener(_onInputChanged);
     _scrollController.addListener(_onScrollChanged);
+    _focusNode.addListener(_onFocusChanged);
 
     // Fix #3: Open keyboard by default on fresh open
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,6 +59,27 @@ class _ChatViewState extends State<ChatView> {
         }
       });
     });
+  }
+
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus) {
+      _scrollToBottomWithDelays();
+    }
+  }
+
+  void _scrollToBottomWithDelays() {
+    if (!_justSubmittedPrompt && mounted) {
+      _scrollToBottom(150);
+      _scrollTimers.add(Timer(const Duration(milliseconds: 100), () {
+        if (mounted && _focusNode.hasFocus) _scrollToBottom(150);
+      }));
+      _scrollTimers.add(Timer(const Duration(milliseconds: 250), () {
+        if (mounted && _focusNode.hasFocus) _scrollToBottom(200);
+      }));
+      _scrollTimers.add(Timer(const Duration(milliseconds: 400), () {
+        if (mounted && _focusNode.hasFocus) _scrollToBottom(200);
+      }));
+    }
   }
 
   void _onInputChanged() {
@@ -80,6 +104,11 @@ class _ChatViewState extends State<ChatView> {
   @override
   void dispose() {
     _initFocusTimer?.cancel();
+    _focusNode.removeListener(_onFocusChanged);
+    for (final t in _scrollTimers) {
+      t.cancel();
+    }
+    _scrollTimers.clear();
     _inputController.removeListener(_onInputChanged);
     _scrollController.removeListener(_onScrollChanged);
     _copyTimer?.cancel();
@@ -90,12 +119,12 @@ class _ChatViewState extends State<ChatView> {
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom([int durationMs = 250]) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
+          duration: Duration(milliseconds: durationMs),
           curve: Curves.easeOutCubic,
         );
       }
@@ -280,18 +309,16 @@ class _ChatViewState extends State<ChatView> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final isKeyboardNowOpen = bottomInset > 0;
 
-    if (isKeyboardNowOpen != _isKeyboardOpen) {
-      final wasOpen = _isKeyboardOpen;
-      _isKeyboardOpen = isKeyboardNowOpen;
+    if (bottomInset != _lastBottomInset) {
+      final wasIncreasing = bottomInset > _lastBottomInset;
+      _lastBottomInset = bottomInset;
 
-      if (isKeyboardNowOpen && !wasOpen) {
+      if (wasIncreasing && bottomInset > 0) {
         // Fix 1: When opening keyboard in previous chat, bottom of chat goes UP above keyboard
         if (!_justSubmittedPrompt && provider.messages.isNotEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToBottom();
-          });
+          _scrollToBottomWithDelays();
         }
-      } else if (!isKeyboardNowOpen && wasOpen) {
+      } else if (bottomInset == 0 && _isKeyboardOpen) {
         // Fix 1: When closing keyboard, bottom of chat goes DOWN
         if (!_justSubmittedPrompt && provider.messages.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -307,6 +334,7 @@ class _ChatViewState extends State<ChatView> {
           });
         }
       }
+      _isKeyboardOpen = isKeyboardNowOpen;
     }
 
     final showFloatingScrollButton = _showScrollToBottom && !isKeyboardNowOpen && provider.messages.isNotEmpty;
@@ -858,6 +886,7 @@ class _ChatViewState extends State<ChatView> {
             child: TextField(
               controller: _inputController,
               focusNode: _focusNode,
+              onTap: _scrollToBottomWithDelays,
               autofocus: provider.currentSession == null && provider.messages.isEmpty,
               maxLines: 5,
               minLines: 1,
