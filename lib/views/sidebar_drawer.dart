@@ -302,60 +302,77 @@ class SidebarDrawer extends StatelessWidget {
             Expanded(
               child: provider.isLoadingSessions
                   ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                  : provider.sessions.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No previous conversations',
-                            style: TextStyle(fontSize: 13, color: textMuted),
-                          ),
-                        )
-                      : ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          itemCount: provider.sessions.length,
-                          itemBuilder: (context, index) {
-                            final session = provider.sessions[index];
-                            final isSelected = provider.currentSession?.id == session.id;
-                            Offset tapPosition = Offset.zero;
-
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Material(
-                                color: isSelected ? activeBg : Colors.transparent,
-                                borderRadius: BorderRadius.circular(10),
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTapDown: (details) => tapPosition = details.globalPosition,
-                                  onTap: () {
-                                    HapticFeedback.lightImpact();
-                                    provider.selectSession(session);
-                                    Navigator.of(context).pop();
-                                  },
-                                  onLongPress: () => _showSessionContextMenu(context, provider, session, tapPosition),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            session.name,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                                              color: isSelected ? textPrimary : textSecondary,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                  : RefreshIndicator(
+                      color: textPrimary,
+                      backgroundColor: cardBg,
+                      strokeWidth: 2.0,
+                      onRefresh: () async {
+                        HapticFeedback.lightImpact();
+                        await provider.refreshSessions();
+                      },
+                      child: provider.sessions.isEmpty
+                          ? LayoutBuilder(
+                              builder: (context, constraints) => SingleChildScrollView(
+                                physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                                  child: Center(
+                                    child: Text(
+                                      'No previous conversations',
+                                      style: TextStyle(fontSize: 13, color: textMuted),
                                     ),
                                   ),
                                 ),
                               ),
-                            );
-                          },
-                        ),
+                            )
+                          : ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              itemCount: provider.sessions.length,
+                              itemBuilder: (context, index) {
+                                final session = provider.sessions[index];
+                                final isSelected = provider.currentSession?.id == session.id;
+                                Offset tapPosition = Offset.zero;
+
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Material(
+                                    color: isSelected ? activeBg : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(10),
+                                      onTapDown: (details) => tapPosition = details.globalPosition,
+                                      onTap: () {
+                                        HapticFeedback.lightImpact();
+                                        provider.selectSession(session);
+                                        Navigator.of(context).pop();
+                                      },
+                                      onLongPress: () => _showSessionContextMenu(context, provider, session, tapPosition),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                session.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                                  color: isSelected ? textPrimary : textSecondary,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
             ),
 
             // Split Footer: Left Minimal Status Dot -> Right Brain & Theme Icons

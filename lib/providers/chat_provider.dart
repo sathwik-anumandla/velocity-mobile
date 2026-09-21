@@ -200,6 +200,16 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshSessions() async {
+    try {
+      final list = await _api.listSessions();
+      _sessions = list;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error refreshing sessions: $e');
+    }
+  }
+
   Future<void> selectSession(Session session) async {
     if (_isGenerating) return;
     _isTemporaryMode = false;
@@ -467,7 +477,7 @@ class ChatProvider extends ChangeNotifier {
         );
       }
     }
-    final session = _currentSession!;
+    Session session = _currentSession!;
     if (!_openTabIds.contains(session.id)) {
       _openTabIds.add(session.id);
     }
@@ -529,6 +539,7 @@ class ChatProvider extends ChangeNotifier {
         _openTabIds.remove(session.id);
         _openTabIds.add(newSess.id);
         _currentSession = newSess;
+        session = newSess;
         targetSessionId = newSess.id;
         userMsg.sessionId = newSess.id;
         assistantMsg.sessionId = newSess.id;
@@ -573,10 +584,10 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
       },
       onSessionRenamed: (newTitle) {
-        if (_currentSession?.id == session.id) {
+        if (_currentSession?.id == targetSessionId) {
           _currentSession!.name = newTitle;
         }
-        final sIdx = _sessions.indexWhere((s) => s.id == session.id);
+        final sIdx = _sessions.indexWhere((s) => s.id == targetSessionId);
         if (sIdx != -1) {
           _sessions[sIdx].name = newTitle;
         }
@@ -603,7 +614,13 @@ class ChatProvider extends ChangeNotifier {
         assistantMsg.isStreaming = false;
         assistantMsg.durationSeconds = _elapsedSeconds > 0 ? _elapsedSeconds : 1.5;
         assistantMsg.toolCalls = List.from(_activeTools);
-        session.updatedAt = DateTime.now();
+        if (_currentSession?.id == targetSessionId) {
+          _currentSession!.updatedAt = DateTime.now();
+        }
+        final sIdx = _sessions.indexWhere((s) => s.id == targetSessionId);
+        if (sIdx != -1) {
+          _sessions[sIdx].updatedAt = DateTime.now();
+        }
         HapticFeedback.lightImpact();
         notifyListeners();
       },
